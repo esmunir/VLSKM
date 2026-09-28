@@ -26,7 +26,7 @@ from affine_steerers import dedode_descriptor_G, dedode_detector_L, dedode_descr
 from affine_steerers.steerers import SteererSpread
 
 # --- NEW MAMBA IMPORTS ---
-from gluefactory.models.matchers.mambaglue_newstructure_multidir import MambaGlue
+from gluefactory.models.matchers.vlskm import VLSKM
 from gluefactory.models.utils.losses import NLLLoss
 
 # ==========================================
@@ -241,7 +241,7 @@ if __name__ == "__main__":
     ckpt_dir = os.path.join(CURRENT_DIR, "checkpoints", args.exp_name)
     os.makedirs(ckpt_dir, exist_ok=True)
     
-    log.info(f"🐍 Starting MAMBAGLUE Smoke Test: {args.exp_name}")
+    log.info(f"🐍 Starting VLSKM Smoke Test: {args.exp_name}")
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
@@ -255,9 +255,9 @@ if __name__ == "__main__":
     
     detector, descriptor, steerer = load_frozen_affine_models(device)
     
-    # --- MAMBAGLUE SETUP ---
-    mamba_conf = {
-        "name": "mambaglue",
+    # --- SETUP ---
+    vlskm_conf = {
+        "name": "vlskm",
         "input_dim": 256,       # Match DeDoDe output
         "descriptor_dim": 256, 
         "n_layers": 5,
@@ -269,7 +269,7 @@ if __name__ == "__main__":
         "filter_threshold": 0.1,
         "weights": None         # Train from scratch!
     }
-    matcher = MambaGlue(features=None, **mamba_conf).to(device)
+    matcher = VLSKM(features=None, **vlskm_conf).to(device)
 
     # --- STAGE 2 PREPARATION ---
     if args.stage == 2:
@@ -427,10 +427,9 @@ if __name__ == "__main__":
                     "H_gt": H_gt_adj  # 🚀 ADDED THIS LINE
                 }
 
-                # --- 2. MAMBAGLUE FORWARD PASS ---
+                # --- 2. FORWARD PASS ---
                 pred = matcher(data)
                 
-                # --- 3. CUSTOM MAMBA LOSS ---
                 # --- 3. LOSS CALCULATION BASED ON STAGE ---
                 if args.stage == 1:
                     losses = compute_mamba_loss(matcher, pred, data, nll_loss_module)

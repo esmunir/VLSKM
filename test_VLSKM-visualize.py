@@ -32,7 +32,7 @@ sys.path.append(GLUE_FACTORY_DIR)
 # 2. IMPORTS & MODEL INIT
 # ==========================================
 from omegaconf import OmegaConf
-from gluefactory.models.matchers.mambaglue import MambaGlue
+from gluefactory.models.matchers.vlskm import VLSKM
 
 try:
     from affine_steerers import dedode_descriptor_G, dedode_detector_L, dedode_descriptor_B
@@ -61,9 +61,9 @@ def load_models(device="cuda"):
     steerer.load_state_dict(torch.load(os.path.join(weights_dir, "steerer_aff_equi_B.pth"), map_location=device))
     steerer.eval()
     
-    print(f"🧠 Loading Custom Trained MambaGlue (5 Layers)...")
-    mamba_conf = {
-        "name": "direction_aware_mambaglue",
+    print(f"🧠 Loading Custom Trained VLSKM (5 Layers)...")
+    vlskm_conf = {
+        "name": "vlskm",
         "input_dim": 256,       
         "descriptor_dim": 256, 
         "n_layers": 5,          
@@ -74,17 +74,17 @@ def load_models(device="cuda"):
         "weights": None         
     }
     
-    mambaglue = MambaGlue(features=None, **mamba_conf).to(device)
+    model = VLSKM(features=None, **vlskm_conf).to(device)
     ckpt_path = os.path.join(CURRENT_DIR, "checkpoints", args.exp_name, "checkpoint1_9.tar")
     if not os.path.exists(ckpt_path):
         print(f"⚠️ WARNING: Could not find checkpoint at {ckpt_path}.")
         sys.exit()
     else:
-        mambaglue.load_state_dict(torch.load(ckpt_path, map_location=device))
-        print("✅ MambaGlue weights loaded successfully.")
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
+        print("✅ VLSKM weights loaded successfully.")
     
-    mambaglue.eval()
-    return detector, descriptor, steerer, mambaglue
+    model.eval()
+    return detector, descriptor, steerer, model
 
 def load_image_to_tensor(img_path, device, size=(504, 504)):
     img = Image.open(img_path).convert('RGB').resize(size, Image.Resampling.LANCZOS)
@@ -144,7 +144,7 @@ def estimate_pose_ccw(H, gt_uav, gt_sat):
 # ==========================================
 # 7. PIPELINE LOGIC (TOP-1 vs TOP-5 HYPOTHESIS)
 # ==========================================
-def process_and_verify(uav_path, sat_path, detector, descriptor, steerer, matcher, mambaglue, device, sat_dict, uav_dict):
+def process_and_verify(uav_path, sat_path, detector, descriptor, steerer, matcher, model, device, sat_dict, uav_dict):
     uav_tensor = load_image_to_tensor(uav_path, device)
     sat_tensor = load_image_to_tensor(sat_path, device)
 
@@ -207,7 +207,7 @@ def process_and_verify(uav_path, sat_path, detector, descriptor, steerer, matche
             
             # ⚡ FIX: bfloat16 prevents Mamba SSM state collapse
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                mg_pred = mambaglue(mg_data)
+                mg_pred = model(mg_data)
             
             m0 = mg_pred["matches0"][0] 
             valid_matches = m0 > -1
@@ -262,10 +262,10 @@ def load_image_for_display(img_path, size=(504, 504)):
     img = Image.open(img_path).convert('RGB').resize(size, Image.Resampling.LANCZOS)
     return np.array(img)
 
-def visualize_single_pair(uav_path, sat_path, detector, descriptor, steerer, mambaglue,
+def visualize_single_pair(uav_path, sat_path, detector, descriptor, steerer, model,
                            device, sat_dict, uav_dict, save_path):
     """
-    Runs the same detect -> describe -> rotate-and-steer -> MambaGlue-match pipeline
+    Runs the same detect -> describe -> rotate-and-steer -> match pipeline
     as process_and_verify(), but for ONE UAV/satellite pair, and renders the matched
     keypoints (green = RANSAC inlier, red = outlier) on a side-by-side image saved to disk.
     """
@@ -313,7 +313,7 @@ def visualize_single_pair(uav_path, sat_path, detector, descriptor, steerer, mam
         }
 
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            mg_pred = mambaglue(mg_data)
+            mg_pred = model(mg_data)
 
         m0 = mg_pred["matches0"][0]
         valid_matches = m0 > -1
@@ -424,7 +424,7 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     sat_dict, uav_dict = load_all_metadata(METADATA_DIR)
-    detector, descriptor, steerer, mambaglue = load_models(device) 
+    detector, descriptor, steerer, model = load_models(device) 
     
     num_rotations = 16
     angles = torch.linspace(0, 2 * np.pi, num_rotations + 1)[:-1]
@@ -493,7 +493,7 @@ if __name__ == "__main__":
             save_path = os.path.join(output_dir, out_name)
 
             print(f"  [{i}/{len(pairs)}] {os.path.basename(uav_path)} ↔ {os.path.basename(sat_path)}")
-            visualize_single_pair(uav_path, sat_path, detector, descriptor, steerer, mambaglue,
+            visualize_single_pair(uav_path, sat_path, detector, descriptor, steerer, model,
                                    device, sat_dict, uav_dict, save_path)
 
         sys.exit()
@@ -511,7 +511,7 @@ if __name__ == "__main__":
     _ = process_and_verify(
         glob.glob(os.path.join(TEST_DIR, "query_drone", "*", "*.png"))[0],
         glob.glob(os.path.join(TEST_DIR, "gallery_satellite", "*", "*.png"))[0],
-        detector, descriptor, steerer, matcher, mambaglue, device, sat_dict, uav_dict
+        detector, descriptor, steerer, matcher, model, device, sat_dict, uav_dict
     )
     
     for class_dir in gallery_dirs:
@@ -523,7 +523,7 @@ if __name__ == "__main__":
         
         for uav_path in uav_img_paths:
             for sat_path in sat_img_paths:
-                t1_met, t5_met, latency = process_and_verify(uav_path, sat_path, detector, descriptor, steerer, matcher, mambaglue, device, sat_dict, uav_dict)
+                t1_met, t5_met, latency = process_and_verify(uav_path, sat_path, detector, descriptor, steerer, matcher, model, device, sat_dict, uav_dict)
                 all_latencies.append(latency)
                 
                 # TOP 1 LOGGING (np.inf if failed)
