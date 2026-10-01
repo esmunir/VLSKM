@@ -25,4 +25,4 @@ The framework is evaluated on Taipei-VLoc datasets to test both multi-temporal r
 A synthetic cross-view UAV localization dataset designed to test varying spatial and temporal conditions.
 * Features multiple query-image spatial coverage levels.
 * Includes multiple satellite-image acquisition times to evaluate robustness to temporal appearance variation.
-* **Download:** [Will be available soon]
+* **Download:** https://www.kaggle.com/datasets/munirntut/taipei-vloc
